@@ -1,0 +1,16 @@
+{
+  "name": "line-gatekeeper-bot",
+  "version": "2.1.0",
+  "description": "LINE OA soft-gatekeeper with contact Flex + admin notifications (no LIFF button)",
+  "type": "commonjs",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "@line/bot-sdk": "^7.5.2",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "nodemailer": "^6.9.13"
+  }
+}

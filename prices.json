@@ -1,0 +1,49 @@
+{
+  "base": {
+    "single": {
+      "A": {
+        "ig": 59000,
+        "tt": 79000,
+        "dual": 99000
+      },
+      "B": {
+        "ig": 79000,
+        "tt": 99000,
+        "dual": 119000
+      }
+    },
+    "bundle3": {
+      "A": {
+        "ig": 159000,
+        "tt": 215000,
+        "dual": 269000
+      },
+      "B": {
+        "ig": 215000,
+        "tt": 269000,
+        "dual": 319000
+      }
+    }
+  },
+  "fees": {
+    "health_premium_flat": 20000
+  },
+  "asset_pct": {
+    "1m": 0.15,
+    "3m": 0.2,
+    "6m": 0.3,
+    "permanent": 0.5
+  },
+  "gencode_pct": {
+    "30d": 0.0,
+    "90d": 0.05,
+    "180d": 0.1
+  },
+  "exclusivity_pct_per_month": 0.15,
+  "exclusivity_max_months": 2,
+  "rush_pct": 0.1,
+  "range_pad": {
+    "low": 0.9,
+    "high": 1.2
+  }
+}
