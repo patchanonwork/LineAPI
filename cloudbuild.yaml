@@ -1,16 +1,16 @@
-# cloudbuild.yaml — Buildpacks → Artifact Registry → Cloud Run
 substitutions:
   _REGION: asia-southeast1
   _REPO: cloud-run-source-deploy
   _SERVICE: line-gatekeeper-api
   _IMAGE: $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_SERVICE:$SHORT_SHA
 
+options:
+  logging: CLOUD_LOGGING_ONLY
+
 steps:
-  # Build container with Buildpacks and push to Artifact Registry
   - name: gcr.io/k8s-skaffold/pack
     args: ['build','$_IMAGE','--builder=gcr.io/buildpacks/builder','--publish','--path','.']
 
-  # Deploy the image to Cloud Run
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     entrypoint: gcloud
     args: ['run','deploy','$_SERVICE','--image','$_IMAGE','--region','$_REGION','--allow-unauthenticated','--port','8080']
