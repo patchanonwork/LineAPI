@@ -1,5 +1,4 @@
 {
-  const path = require("path");
   "type": "flex",
   "altText": "ติดต่อคุณณณ",
   "contents": {
