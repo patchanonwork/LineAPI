@@ -1,40 +1,40 @@
-# cloudbuild.yaml
-# Builds with Google Cloud Buildpacks and deploys to Cloud Run.
-# Keep secrets/env in Cloud Run service config (not here).
-
+# cloudbuild.yaml — Buildpacks → Artifact Registry → Cloud Run deploy
 substitutions:
-  _SERVICE_NAME: line-gatekeeper-api
   _REGION: asia-southeast1
-
-images:
-  - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA'
+  _REPO: cloud-run-source-deploy
+  _SERVICE: line-gatekeeper-api
+  _IMAGE: $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_SERVICE:$SHORT_SHA
 
 steps:
-  - name: 'gcr.io/k8s-skaffold/pack'
-    id: Build image with Buildpacks
-    args:
-      - build
-      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA'
-      - --builder
-      - gcr.io/buildpacks/builder
-      - --path
-      - .
+# Make sure Artifact Registry repo exists (no-op if already there)
+- name: gcr.io/google.com/cloudsdktool/cloud-sdk
+  id: Ensure AR repo
+  entrypoint: bash
+  args:
+    - -c
+    - |
+      gcloud artifacts repositories describe "$_REPO" --location="$_REGION" || \
+      gcloud artifacts repositories create "$_REPO" \
+        --repository-format=docker --location="$_REGION" \
+        --description="Images for Cloud Run source deploys"
 
-  - name: 'gcr.io/cloud-builders/gcloud'
-    id: Deploy to Cloud Run
-    args:
-      - run
-      - deploy
-      - '${_SERVICE_NAME}'
-      - --image
-      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA'
-      - --region
-      - '${_REGION}'
-      - --platform
-      - managed
-      - --allow-unauthenticated
-      - --port
-      - '8080'
-      - --quiet
+# Build container image with Buildpacks (no Dockerfile needed)
+- name: gcr.io/k8s-skaffold/pack
+  id: Build image with Buildpacks
+  args: ['build', '$_IMAGE', '--builder=gcr.io/buildpacks/builder', '--publish', '--path', '.']
 
-timeout: 1200s
+# Deploy that image to Cloud Run
+- name: gcr.io/google.com/cloudsdktool/cloud-sdk
+  id: Deploy to Cloud Run
+  args:
+    ['run','deploy','$_SERVICE',
+     '--image','$_IMAGE',
+     '--region','$_REGION',
+     '--allow-unauthenticated',
+     '--port','8080',
+     '--quiet']
+
+images:
+- $_IMAGE
+
+timeout: 1800s
