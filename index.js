@@ -1,8 +1,8 @@
-
 const express = require("express");
 const line = require("@line/bot-sdk");
-require("dotenv").config();
 const fs = require("fs");
+const path = require("path");
+require("dotenv").config();
 
 const { classify, extractSlots, trustScore, quoteFor, gateQuickReply, askForMissing, quoteText } = require("./brain");
 const { sendEmail, sendLinePush } = require("./notifier");
@@ -66,15 +66,14 @@ function reply(token, messages){
 }
 
 function contactFlex(){
-  const fp = path.join(__dirname, "contactFlex.json"); // file at repo root
-  const tmpl = JSON.parse(fs.readFileSync("./contactFlex.json", "utf8"));
+  const fp = path.join(__dirname, "contactFlex.json");   // file at repo root
+  const tmpl = JSON.parse(fs.readFileSync(fp, "utf8"));
   const phone = process.env.CONTACT_PHONE || "+66967676734";
   const email = process.env.CONTACT_EMAIL || "Patchanon.work@gmail.com";
-  let j = JSON.stringify(tmpl)
+  const replaced = JSON.stringify(tmpl)
     .replace(/{{CONTACT_PHONE}}/g, phone)
     .replace(/{{CONTACT_EMAIL}}/g, email);
-  return JSON.parse(j);
-}
+  return JSON.parse(replaced);
 }
 
 async function notifyAdmin(title, userText, e){
@@ -84,7 +83,7 @@ async function notifyAdmin(title, userText, e){
   try { await sendLinePush(client, `${title}\nFrom ${who}\n---\n${userText}`); } catch(err){ console.error("line notify failed", err); }
 }
 
-// Serve static (no LIFF page needed but keep path if ever added)
+// (No LIFF page yet, but keep path if you add one later)
 app.use("/liff", express.static("liff"));
 
 const port = process.env.PORT || 8080;
