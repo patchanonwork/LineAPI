@@ -1,0 +1,18 @@
+substitutions:
+  _REGION: asia-southeast1
+  _SERVICE: line-gatekeeper-api
+  _IMAGE: gcr.io/$PROJECT_ID/line-gatekeeper-api:$COMMIT_SHA
+
+steps:
+# Build container (Buildpacks - no Dockerfile needed)
+- name: gcr.io/k8s-skaffold/pack
+  entrypoint: pack
+  args: ["build", "$_IMAGE", "--builder=gcr.io/buildpacks/builder", "--publish"]
+
+# Deploy to Cloud Run
+- name: gcr.io/google.com/cloudsdktool/cloud-sdk
+  entrypoint: gcloud
+  args: ["run","deploy","$_SERVICE","--image","$_IMAGE","--region","$_REGION","--allow-unauthenticated"]
+
+images:
+- $_IMAGE
