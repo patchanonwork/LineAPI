@@ -66,13 +66,15 @@ function reply(token, messages){
 }
 
 function contactFlex(){
-  const tmpl = JSON.parse(fs.readFileSync("./ui/contactFlex.json","utf8"));
-  const phone = process.env.CONTACT_PHONE || "+66XXXXXXXXX";
+  const fp = path.join(__dirname, "contactFlex.json"); // file at repo root
+  const tmpl = JSON.parse(fs.readFileSync(fp, "utf8"));
+  const phone = process.env.CONTACT_PHONE || "+66967676734";
   const email = process.env.CONTACT_EMAIL || "Patchanon.work@gmail.com";
   let j = JSON.stringify(tmpl)
-    .replace("{{CONTACT_PHONE}}", phone)
-    .replace("{{CONTACT_EMAIL}}", email);
+    .replace(/{{CONTACT_PHONE}}/g, phone)
+    .replace(/{{CONTACT_EMAIL}}/g, email);
   return JSON.parse(j);
+}
 }
 
 async function notifyAdmin(title, userText, e){
