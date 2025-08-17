@@ -67,7 +67,7 @@ function reply(token, messages){
 
 function contactFlex(){
   const fp = path.join(__dirname, "contactFlex.json"); // file at repo root
-  const tmpl = JSON.parse(fs.readFileSync(fp, "utf8"));
+  const tmpl = JSON.parse(fs.readFileSync("./contactFlex.json", "utf8"));
   const phone = process.env.CONTACT_PHONE || "+66967676734";
   const email = process.env.CONTACT_EMAIL || "Patchanon.work@gmail.com";
   let j = JSON.stringify(tmpl)
