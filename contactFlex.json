@@ -1,0 +1,40 @@
+{
+  const path = require("path");
+  "type": "flex",
+  "altText": "ติดต่อคุณณณ",
+  "contents": {
+    "type": "bubble",
+    "hero": {
+      "type": "box",
+      "layout": "vertical",
+      "contents": [
+        { "type": "text", "text": "ติดต่อคุณณณ", "weight": "bold", "size": "xl" },
+        { "type": "text", "text": "เลือกวิธีติดต่อที่สะดวก", "size": "sm", "color": "#888888", "margin": "sm" }
+      ],
+      "paddingAll": "16px"
+    },
+    "body": {
+      "type": "box",
+      "layout": "vertical",
+      "spacing": "md",
+      "contents": [
+        {
+          "type": "button",
+          "style": "primary",
+          "action": { "type": "uri", "label": "โทรหา (หากติดต่อไม่ได้/เร่งด่วน)", "uri": "tel:{{CONTACT_PHONE}}" }
+        },
+        {
+          "type": "button",
+          "style": "secondary",
+          "action": { "type": "uri", "label": "อีเมล", "uri": "mailto:{{CONTACT_EMAIL}}" }
+        },
+        {
+          "type": "button",
+          "style": "link",
+          "action": { "type": "message", "label": "รอการตอบกลับข้อความ", "text": "รอการตอบกลับข้อความ" }
+        }
+      ]
+    },
+    "footer": { "type": "box", "layout": "vertical", "contents": [] }
+  }
+}
