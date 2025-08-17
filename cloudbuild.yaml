@@ -1,18 +1,40 @@
+# cloudbuild.yaml
+# Builds with Google Cloud Buildpacks and deploys to Cloud Run.
+# Keep secrets/env in Cloud Run service config (not here).
+
 substitutions:
+  _SERVICE_NAME: line-gatekeeper-api
   _REGION: asia-southeast1
-  _SERVICE: line-gatekeeper-api
-  _IMAGE: gcr.io/$PROJECT_ID/line-gatekeeper-api:$COMMIT_SHA
-
-steps:
-# Build container (Buildpacks - no Dockerfile needed)
-- name: gcr.io/k8s-skaffold/pack
-  entrypoint: pack
-  args: ["build", "$_IMAGE", "--builder=gcr.io/buildpacks/builder", "--publish"]
-
-# Deploy to Cloud Run
-- name: gcr.io/google.com/cloudsdktool/cloud-sdk
-  entrypoint: gcloud
-  args: ["run","deploy","$_SERVICE","--image","$_IMAGE","--region","$_REGION","--allow-unauthenticated"]
 
 images:
-- $_IMAGE
+  - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA'
+
+steps:
+  - name: 'gcr.io/k8s-skaffold/pack'
+    id: Build image with Buildpacks
+    args:
+      - build
+      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA'
+      - --builder
+      - gcr.io/buildpacks/builder
+      - --path
+      - .
+
+  - name: 'gcr.io/cloud-builders/gcloud'
+    id: Deploy to Cloud Run
+    args:
+      - run
+      - deploy
+      - '${_SERVICE_NAME}'
+      - --image
+      - 'gcr.io/$PROJECT_ID/${_SERVICE_NAME}:$SHORT_SHA'
+      - --region
+      - '${_REGION}'
+      - --platform
+      - managed
+      - --allow-unauthenticated
+      - --port
+      - '8080'
+      - --quiet
+
+timeout: 1200s
