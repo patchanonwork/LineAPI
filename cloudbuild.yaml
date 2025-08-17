@@ -1,4 +1,4 @@
-# cloudbuild.yaml — Buildpacks → Artifact Registry → Cloud Run deploy
+# cloudbuild.yaml — Buildpacks → Artifact Registry → Cloud Run
 substitutions:
   _REGION: asia-southeast1
   _REPO: cloud-run-source-deploy
@@ -6,35 +6,14 @@ substitutions:
   _IMAGE: $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_SERVICE:$SHORT_SHA
 
 steps:
-# Make sure Artifact Registry repo exists (no-op if already there)
-- name: gcr.io/google.com/cloudsdktool/cloud-sdk
-  id: Ensure AR repo
-  entrypoint: bash
-  args:
-    - -c
-    - |
-      gcloud artifacts repositories describe "$_REPO" --location="$_REGION" || \
-      gcloud artifacts repositories create "$_REPO" \
-        --repository-format=docker --location="$_REGION" \
-        --description="Images for Cloud Run source deploys"
+  # Build container with Buildpacks and push to Artifact Registry
+  - name: gcr.io/k8s-skaffold/pack
+    args: ['build','$_IMAGE','--builder=gcr.io/buildpacks/builder','--publish','--path','.']
 
-# Build container image with Buildpacks (no Dockerfile needed)
-- name: gcr.io/k8s-skaffold/pack
-  id: Build image with Buildpacks
-  args: ['build', '$_IMAGE', '--builder=gcr.io/buildpacks/builder', '--publish', '--path', '.']
+  # Deploy the image to Cloud Run
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    entrypoint: gcloud
+    args: ['run','deploy','$_SERVICE','--image','$_IMAGE','--region','$_REGION','--allow-unauthenticated','--port','8080']
 
-# Deploy that image to Cloud Run
-- name: gcr.io/google.com/cloudsdktool/cloud-sdk
-  id: Deploy to Cloud Run
-  args:
-    ['run','deploy','$_SERVICE',
-     '--image','$_IMAGE',
-     '--region','$_REGION',
-     '--allow-unauthenticated',
-     '--port','8080',
-     '--quiet']
-
-images:
-- $_IMAGE
-
-timeout: 1800s
+images: ['$_IMAGE']
+timeout: '1800s'
