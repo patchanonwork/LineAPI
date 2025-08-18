@@ -1,52 +1,39 @@
+# cloudbuild.yaml — build & deploy from source (no pack image)
+substitutions:
+  _SERVICE_NAME: line-gatekeeper
+  _REGION: asia-southeast1
+
 steps:
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
-    id: 'Setup-Artifact-Registry'
+  # Make sure the Artifact Registry repo exists (idempotent)
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: Setup-Artifact-Registry
     entrypoint: bash
     args:
-      - -c
+      - -lc
       - |
         set -e
-        echo "Checking for existing Artifact Registry repository: cloud-run-source-deploy in asia-southeast1"
-        if ! gcloud artifacts repositories describe cloud-run-source-deploy --location=asia-southeast1 --format=json; then
-          echo "Repository not found. Creating it..."
-          gcloud artifacts repositories create cloud-run-source-deploy \
-            --location=asia-southeast1 \
+        REPO=cloud-run-source-deploy
+        REGION=${_REGION}
+        if ! gcloud artifacts repositories describe "$REPO" \
+              --location "$REGION" --format="value(name)"; then
+          gcloud artifacts repositories create "$REPO" \
             --repository-format=docker \
-            --description="Repository for Cloud Run source deployments"
-        else
-          echo "Repository exists. Continuing..."
+            --location "$REGION"
         fi
-  - name: 'gcr.io/buildpacks/pack'
-    id: 'Build-Image'
+
+  # Build + deploy using Cloud Run "source deploy" (uses Google Buildpacks)
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk:slim
+    id: Deploy-From-Source
+    entrypoint: bash
     args:
-      - build
-      - '${_LOCATION}-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/$REPO_NAME:$COMMIT_SHA'
-      - '--builder'
-      - 'gcr.io/buildpacks/builder:v1'
-      - '--publish'
-    env:
-      - 'PACK_LOG_LEVEL=info'
-  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
-    id: 'Deploy-To-Cloud-Run'
-    args:
-      - run
-      - deploy
-      - '${_SERVICE_NAME}'
-      - '--image'
-      - '${_LOCATION}-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/$REPO_NAME:$COMMIT_SHA'
-      - '--region'
-      - 'asia-southeast1'
-      - '--platform'
-      - 'managed'
-      - '--quiet'
-      - '--allow-unauthenticated'
-      - '--service-account'
-      - '${_DEPLOYER_SA}'
-      - '--port'
-      - '8080'
+      - -lc
+      - |
+        set -e
+        gcloud run deploy ${_SERVICE_NAME} \
+          --source . \
+          --region ${_REGION} \
+          --allow-unauthenticated \
+          --quiet
+
 options:
   logging: CLOUD_LOGGING_ONLY
-substitutions:
-  _LOCATION: asia-southeast1
-  _SERVICE_NAME: line-gatekeeper
-  _DEPLOYER_SA: ''
