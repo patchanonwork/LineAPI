@@ -1,19 +1,52 @@
-substitutions:
-  _REGION: asia-southeast1
-  _REPO: cloud-run-source-deploy
-  _SERVICE: line-gatekeeper-api
-  _IMAGE: $_REGION-docker.pkg.dev/$PROJECT_ID/$_REPO/$_SERVICE:$SHORT_SHA
-
+steps:
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: 'Setup-Artifact-Registry'
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -e
+        echo "Checking for existing Artifact Registry repository: cloud-run-source-deploy in asia-southeast1"
+        if ! gcloud artifacts repositories describe cloud-run-source-deploy --location=asia-southeast1 --format=json; then
+          echo "Repository not found. Creating it..."
+          gcloud artifacts repositories create cloud-run-source-deploy \
+            --location=asia-southeast1 \
+            --repository-format=docker \
+            --description="Repository for Cloud Run source deployments"
+        else
+          echo "Repository exists. Continuing..."
+        fi
+  - name: 'gcr.io/buildpacks/pack'
+    id: 'Build-Image'
+    args:
+      - build
+      - '${_LOCATION}-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/$REPO_NAME:$COMMIT_SHA'
+      - '--builder'
+      - 'gcr.io/buildpacks/builder:v1'
+      - '--publish'
+    env:
+      - 'PACK_LOG_LEVEL=info'
+  - name: 'gcr.io/google.com/cloudsdktool/cloud-sdk:slim'
+    id: 'Deploy-To-Cloud-Run'
+    args:
+      - run
+      - deploy
+      - '${_SERVICE_NAME}'
+      - '--image'
+      - '${_LOCATION}-docker.pkg.dev/$PROJECT_ID/cloud-run-source-deploy/$REPO_NAME:$COMMIT_SHA'
+      - '--region'
+      - 'asia-southeast1'
+      - '--platform'
+      - 'managed'
+      - '--quiet'
+      - '--allow-unauthenticated'
+      - '--service-account'
+      - '${_DEPLOYER_SA}'
+      - '--port'
+      - '8080'
 options:
   logging: CLOUD_LOGGING_ONLY
-
-steps:
-  - name: gcr.io/k8s-skaffold/pack
-    args: ['build','$_IMAGE','--builder=gcr.io/buildpacks/builder','--publish','--path','.']
-
-  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
-    entrypoint: gcloud
-    args: ['run','deploy','$_SERVICE','--image','$_IMAGE','--region','$_REGION','--allow-unauthenticated','--port','8080']
-
-images: ['$_IMAGE']
-timeout: '1800s'
+substitutions:
+  _LOCATION: asia-southeast1
+  _SERVICE_NAME: line-gatekeeper
+  _DEPLOYER_SA: ''

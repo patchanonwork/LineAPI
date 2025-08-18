@@ -1,35 +1,61 @@
+const dotenv = require('dotenv');
+const nodemailer = require('nodemailer');
+const { Client } = require('@line/bot-sdk');
 
-const nodemailer = require("nodemailer");
-const line = require("@line/bot-sdk");
+dotenv.config();
 
-function buildTransporter(){
+// Instantiate LINE client
+const lineClient = new Client({
+  channelSecret: process.env.LINE_CHANNEL_SECRET,
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN
+});
+
+async function sendEmail(subject, text) {
   const host = process.env.SMTP_HOST;
-  const port = Number(process.env.SMTP_PORT || 587);
+  const port = process.env.SMTP_PORT;
   const user = process.env.SMTP_USER;
   const pass = process.env.SMTP_PASS;
-  if (!host || !user || !pass) return null;
-  return nodemailer.createTransport({ host, port, secure: port === 465, auth: { user, pass } });
-}
-
-async function sendEmail(subject, html){
-  const transporter = buildTransporter();
-  if (!transporter) return;
   const to = process.env.NOTIFY_EMAIL_TO;
-  if (!to) return;
-  await transporter.sendMail({
-    from: process.env.SMTP_USER,
-    to,
-    subject,
-    html
+  if (!host || !port || !user || !pass || !to) {
+    console.warn('Missing SMTP configuration; skipping sendEmail');
+    return;
+  }
+  const transporter = nodemailer.createTransport({
+    host: host,
+    port: parseInt(port, 10),
+    secure: parseInt(port, 10) === 465,
+    auth: {
+      user: user,
+      pass: pass
+    }
   });
+  try {
+    const info = await transporter.sendMail({
+      from: `"Line Gatekeeper" <${user}>`,
+      to: to,
+      subject: subject,
+      text: text
+    });
+    console.log('Email sent:', info.messageId);
+  } catch (err) {
+    console.error('Failed to send email:', err);
+  }
 }
 
-async function sendLinePush(client, text){
-  const groupId = process.env.ADMIN_GROUP_ID;
-  const userId  = process.env.ADMIN_USER_ID;
-  const msg = { type: "text", text };
-  if (groupId) return client.pushMessage(groupId, msg);
-  if (userId)  return client.pushMessage(userId, msg);
+async function sendLinePush(text) {
+  const to = process.env.ADMIN_GROUP_ID || process.env.ADMIN_USER_ID;
+  if (!to) {
+    console.warn('No ADMIN_GROUP_ID or ADMIN_USER_ID configured; skipping sendLinePush');
+    return;
+  }
+  try {
+    await lineClient.pushMessage(to, { type: 'text', text });
+  } catch (err) {
+    console.error('Failed to send LINE push notification:', err);
+  }
 }
 
-module.exports = { sendEmail, sendLinePush };
+module.exports = {
+  sendEmail,
+  sendLinePush
+};

@@ -1,151 +1,217 @@
+/*
+ * brain.js
+ *
+ * This module implements simple intent detection, slot extraction and
+ * pricing logic for the Line Gatekeeper bot. The heuristics here are
+ * intentionally lightweight – based on regular expressions – and can be
+ * extended or replaced with more sophisticated NLP models in the future.
+ */
 
-const prices = require("./prices.json");
+// Maps of keywords in both Thai and English for intent classification
+const CONTACT_KEYWORDS = [/ติดต่อ/i, /contact/i, /โทรหา/i, /อีเมล/i];
+const NOTIFY_KEYWORDS = [/แจ้งเตือน/i, /notify/i, /ขอกลับไปคุย/i, /ขอแจ้ง/i];
 
-function classify(t){
-  const th = (t || "").toLowerCase();
-  if (/(ขอเรท|เรทการ์ด|media ?kit|rate card|ราคา(?:เท่าไร)?)/.test(th)) return "rate_shop";
-  if (/(ใบเสนอราคา|po|contract|สัญญา|ออกบิล|invoice)/.test(th)) return "ops";
-  if (/(http|bit\.ly|tinyurl)/.test(th) && !/(brand|co|company|official|loreal|cerave|peppermint|solve|paris|th)/.test(th)) return "scam";
-  if (/(tiktok|ig|instagram|dual|reel|story|youtube|brief|บรีฟ|ใช้งาน|usage|asset|gencode|whitelist|timeline|งบ|ฟอร์แมต|format|bundle|ซื้อคลิป|ติดตะกร้า|ติดต่อคุณณณ|แจ้งทีมงาน|รอการตอบกลับข้อความ)/.test(th)) return "brief";
-  return "unknown";
-}
+// Platform keyword mapping. Keys are canonical platform names, values are
+// arrays of regex patterns that match user input.
+const PLATFORM_PATTERNS = {
+  youtube: [/youtube/i, /yt/i, /ยูทูบ/i, /ยูทูป/i],
+  facebook: [/facebook/i, /fb/i, /เฟสบุ๊ค/i, /เฟซบุ๊ก/i],
+  instagram: [/instagram/i, /ig/i, /อินสตาแกรม/i],
+  tiktok: [/tiktok/i, /tt/i, /ติ๊กต็อก/i, /ติ๊กต่อก/i],
+  line: [/line\s?oa/i, /line/i, /ไลน์/i],
+  website: [/website/i, /เว็บ/i, /ไซต์/i, /เวบไซต์/i]
+};
 
-function extractSlots(t){
-  const s = {};
-  const txt = (t || "").toLowerCase();
+// Format keyword mapping
+const FORMAT_PATTERNS = {
+  video: [/video/i, /clip/i, /คลิป/i, /วิดีโอ/i],
+  image: [/image/i, /picture/i, /photo/i, /รูป/i, /ภาพ/i],
+  text: [/text/i, /ข้อความ/i]
+};
 
-  // Contact & notify triggers
-  if (/ติดต่อคุณณณ/.test(txt)) s.contact = true;
-  if (/แจ้งทีมงาน|รอการตอบกลับข้อความ/.test(txt)) s.notify = true;
+// Asset type or generation code
+const ASSET_PATTERNS = {
+  gencode: [/gencode/i, /generate\s?code/i, /เจนโค้ด/i, /รหัส/i],
+  asset: [/asset/i, /แอสเซท/i, /ชิ้นงาน/i, /แอสเซ็ท/i]
+};
 
-  // Format
-  if (/\bformat\s*a\b|ฟอร์แมต\s*a|ฟอร์แมตa|แบบ a\b/.test(txt)) s.format = "A";
-  if (/\bformat\s*b\b|ฟอร์แมต\s*b|ฟอร์แมตb|แบบ b\b/.test(txt)) s.format = "B";
+// Base price per platform (Thai Baht)
+const BASE_PRICE = {
+  youtube: 10000,
+  facebook: 7000,
+  instagram: 5000,
+  tiktok: 4000,
+  line: 3000,
+  website: 8000,
+  unknown: 5000
+};
 
-  // Platform
-  if (/ig|instagram/.test(txt)) s.platform = "ig";
-  if (/tiktok|tt\b/.test(txt)) s.platform = "tt";
-  if (/dual|ig\+tt|ig\+tiktok|ทั้ง\s*ig\s*และ\s*tiktok/.test(txt)) s.platform = "dual";
+// Additional cost per format
+const FORMAT_PRICE = {
+  video: 2000,
+  image: 1000,
+  text: 500,
+  unknown: 1000
+};
 
-  // Quantity: bundle of 3 videos
-  if (/bundle|3\s*video|3\s*คลิป|แพ็กเกจ\s*3/.test(txt)) s.bundle = "bundle3";
-  else s.bundle = s.bundle || "single";
+// Additional cost per asset type
+const ASSET_PRICE = {
+  gencode: 1500,
+  asset: 1000,
+  unknown: 0
+};
 
-  // Health product premium
-  if (/สุขภาพ|health(?:\s*product)?|medical|ยาดม|วิตามิน|supplement|อาหารเสริม/i.test(t)) s.health = true;
+// Thai labels for components to build natural replies
+const PLATFORM_LABEL = {
+  youtube: 'YouTube',
+  facebook: 'Facebook',
+  instagram: 'Instagram',
+  tiktok: 'TikTok',
+  line: 'LINE OA',
+  website: 'เว็บไซต์',
+  unknown: 'แพลตฟอร์มที่ไม่ระบุ'
+};
+const FORMAT_LABEL = {
+  video: 'วิดีโอ',
+  image: 'รูปภาพ',
+  text: 'ข้อความ',
+  unknown: 'รูปแบบที่ไม่ระบุ'
+};
+const ASSET_LABEL = {
+  gencode: 'แบบกำหนดโค้ด',
+  asset: 'แบบมีชิ้นงาน',
+  unknown: 'ไม่ระบุ'
+};
 
-  // Usage (asset) window
-  if (/(asset|usage).*(1\s*เดือน|1m)/i.test(t)) s.asset = "1m";
-  if (/(asset|usage).*(3\s*เดือน|3m)/i.test(t)) s.asset = "3m";
-  if (/(asset|usage).*(6\s*เดือน|6m)/i.test(t)) s.asset = "6m";
-  if (/(asset|usage).*(ตลอดไป|permanent|ไม่จำกัด|ถาวร)/i.test(t)) s.asset = "permanent";
-
-  // Ad authorization (Gencode)
-  if (/gencode.*30|ad.?auth.*30|whitelist.*30/i.test(t)) s.gencode = "30d";
-  if (/gencode.*90|ad.?auth.*90|whitelist.*90/i.test(t)) s.gencode = "90d";
-  if (/gencode.*180|ad.?auth.*180|whitelist.*180/i.test(t)) s.gencode = "180d";
-  if (/gencode.*37|37\s*วัน/i.test(t)) s.gencode = "37d"; // special: treated as free
-
-  // Exclusivity months (cap in rules)
-  const ex = t.match(/exclusive|เอ็กซ์คลู|เอกสิทธิ์|exclusivity.*?(\d+)/i);
-  if (ex) s.exclusivity_months = parseInt(ex[1],10);
-
-  // Rush if timeline < 7 days
-  if (/ด่วน|rush|<\s*7\s*วัน|ภายใน\s*[0-6]\s*วัน|7d/i.test(t)) s.rush = true;
-
-  // Per-line request? (detect '=' lines)
-  if (/=.*$/m.test(t)) s.per_line = true;
-
-  // Other fields
-  const brand = t.match(/brand[:：]\s*([^\n]+)/i); if (brand) s.brand = brand[1].trim();
-  const budget = t.match(/(งบ|budget)\s*[:：]?\s*([<~]?\s*[\d,\.]+k?)/i); if (budget) s.budget = budget[2];
-  return s;
-}
-
-function trustScore(_source, text, s){
-  let score = 0;
-  if (/https?:\/\/[^\s]+/i.test(text)) score += 15;
-  if (s.platform) score += 10;
-  if (s.format || s.bundle) score += 10;
-  if (s.asset || s.gencode) score += 10;
-  if (/timeline|post date|โพส|ส่งงาน|script|draft/i.test(text)) score += 10;
-  if (/ติดตะกร้า|ซื้อคลิป|ดัดแปลง|before\s*&\s*after|barter|boost/i.test(text)) score += 10;
-  if (/(bit\.ly|tinyurl|cutt\.ly|goo\.gl)/i.test(text)) score -= 20;
-  if (/โอนก่อน|คริปโต|crypto|วันนี้เลย|ภายใน\s*(?:วันนี้|พรุ่งนี้)/i.test(text)) score -= 20;
-  return Math.max(0, Math.min(100, score));
-}
-
-function pctLookup(table, key, fallback){ if (!key) return fallback; return (table[key] ?? fallback); }
-function roundK(n){ return Math.round(n/1000)*1000; }
-
-function quoteFor(s){
-  const format = s.format === "B" ? "B" : "A";
-  const platform = ["ig","tt","dual"].includes(s.platform) ? s.platform : "tt";
-  const bundle = s.bundle === "bundle3" ? "bundle3" : "single";
-  const base = prices.base[bundle][format][platform];
-
-  const assetPct   = pctLookup(prices.asset_pct, s.asset, 0);
-  // Treat 37d as FREE (same as 30d)
-  const gencodeKey = (s.gencode === "37d") ? "30d" : s.gencode;
-  const gencodePct = pctLookup(prices.gencode_pct, gencodeKey, 0);
-  const exclMonths = Math.min(Math.max(Number(s.exclusivity_months||0), 0), prices.exclusivity_max_months);
-  const exclPct    = prices.exclusivity_pct_per_month * exclMonths;
-  const rushPct    = s.rush ? prices.rush_pct : 0;
-  const healthFee  = s.health ? prices.fees.health_premium_flat : 0;
-
-  const addonsPct = (assetPct + gencodePct + exclPct + rushPct);
-  const total = roundK(base + healthFee + base * addonsPct);
-
-  if (s.coarse) {
-    const low  = roundK(total * (prices.range_pad.low  || 0.9));
-    const high = roundK(total * (prices.range_pad.high || 1.2));
-    return { min: low, max: high, base, breakdown: { assetPct, gencodePct, exclPct, rushPct, healthFee } };
+/**
+ * classify determines the high-level intent of a message.
+ * Possible return values: 'contact', 'notify', 'quote'.
+ * Defaults to 'quote' when no specific intent is detected.
+ *
+ * @param {string} text
+ * @returns {string}
+ */
+function classify(text) {
+  if (!text) return 'quote';
+  for (const pattern of CONTACT_KEYWORDS) {
+    if (pattern.test(text)) return 'contact';
   }
-  return { exact: total, base, breakdown: { assetPct, gencodePct, exclPct, rushPct, healthFee } };
+  for (const pattern of NOTIFY_KEYWORDS) {
+    if (pattern.test(text)) return 'notify';
+  }
+  return 'quote';
 }
 
-function gateQuickReply(){
+/**
+ * extractSlots scans the text for platform, format and asset keywords.
+ * If a value cannot be determined it remains undefined.
+ *
+ * @param {string} text
+ * @returns {Object}
+ */
+function extractSlots(text) {
+  const lower = text.toLowerCase();
+  let platform;
+  for (const key in PLATFORM_PATTERNS) {
+    const patterns = PLATFORM_PATTERNS[key];
+    if (patterns.some((p) => p.test(lower))) {
+      platform = key;
+      break;
+    }
+  }
+  let format;
+  for (const key in FORMAT_PATTERNS) {
+    const patterns = FORMAT_PATTERNS[key];
+    if (patterns.some((p) => p.test(lower))) {
+      format = key;
+      break;
+    }
+  }
+  let asset;
+  for (const key in ASSET_PATTERNS) {
+    const patterns = ASSET_PATTERNS[key];
+    if (patterns.some((p) => p.test(lower))) {
+      asset = key;
+      break;
+    }
+  }
+  return { platform, format, asset };
+}
+
+/**
+ * trustScore returns a numeric score indicating how confident the bot is in
+ * the extracted slots. This can be used to gate quick replies if desired.
+ *
+ * @param {Object} slots
+ * @returns {number}
+ */
+function trustScore(slots) {
+  let score = 0;
+  if (slots.platform) score += 1;
+  if (slots.format) score += 1;
+  if (slots.asset) score += 1;
+  return score / 3;
+}
+
+/**
+ * Compute a quote given the provided slots.
+ * When slot values are undefined they fall back to 'unknown'.
+ * The returned object includes the price and the resolved slot labels.
+ *
+ * @param {Object} slots
+ * @returns {Object}
+ */
+function quoteFor(slots) {
+  const platform = slots.platform || 'unknown';
+  const format = slots.format || 'unknown';
+  const asset = slots.asset || 'unknown';
+  const base = BASE_PRICE[platform] ?? BASE_PRICE.unknown;
+  const extraFormat = FORMAT_PRICE[format] ?? FORMAT_PRICE.unknown;
+  const extraAsset = ASSET_PRICE[asset] ?? ASSET_PRICE.unknown;
+  const price = base + extraFormat + extraAsset;
   return {
-    type: "text",
-    text: "เพื่อให้ราคาแม่นยำ เลือกข้อมูลสั้น ๆ ด้านล่าง แล้วทีมจะสรุปเลขประมาณให้ทันทีค่ะ",
-    quickReply: { items: [
-      qr("ติดต่อคุณณณ","ติดต่อคุณณณ"),
-      qr("Format: A","Format A"), qr("Format: B","Format B"),
-      qr("Platform: IG","IG"), qr("Platform: TikTok","TikTok"), qr("Platform: Dual IG+TikTok","Dual IG+TikTok"),
-      qr("Bundle: 3 videos","Bundle 3 videos"),
-      qr("Usage (Asset): 1m","Usage Asset 1 เดือน"), qr("Usage (Asset): 3m","Usage Asset 3 เดือน"), qr("Usage (Asset): 6m","Usage Asset 6 เดือน"),
-      qr("Gencode: 30d","Gencode 30 วัน"), qr("Gencode: 90d","Gencode 90 วัน"), qr("Gencode: 180d","Gencode 180 วัน"),
-      qr("คุยกับทีมงาน","คุยกับทีมงาน")
-    ] }
+    platform,
+    format,
+    asset,
+    price
   };
 }
-function qr(text,label){ return { type:"action", action:{ type:"message", label, text } }; }
 
-function askForMissing(range, s){
-  return { type:"text", text:
-`จากข้อมูลเบื้องต้น เบสงานอยู่ที่ ~฿${range.min.toLocaleString()}–฿${range.max.toLocaleString()} (ex-VAT)
-โปรดระบุเพิ่ม: Format (A/B), Platform (IG/TT/Dual), Asset (1/3/6m/ถาวร), Gencode (30/90/180 วัน${s.gencode==="37d"?" • 37 วัน: ฟรี":""}), Exclusivity (0–2 เดือน)` };
+/**
+ * Determine if any slot is missing and return a prompt in Thai asking for
+ * that information. If all required slots are present, return null.
+ *
+ * @param {Object} slots
+ * @returns {string|null}
+ */
+function askForMissing(slots) {
+  const missing = [];
+  if (!slots.platform) missing.push('แพลตฟอร์ม (เช่น Facebook, YouTube)');
+  if (!slots.format) missing.push('รูปแบบ (วิดีโอ, รูปภาพ, ข้อความ)');
+  if (!slots.asset) missing.push('ประเภทชิ้นงาน (asset หรือ gencode)');
+  if (missing.length === 0) return null;
+  return `กรุณาระบุ${missing.join(' และ ')}`;
 }
 
-function quoteText(q, s){
-  const asset = s.asset ? `Asset ${s.asset}` : "Asset 1m (ถ้ายืนยัน)";
-  let gencode = s.gencode ? `Gencode ${s.gencode}` : "Gencode 30d (ฟรี)";
-  if (s.gencode === "37d") gencode = "Gencode 37d (ฟรี)";
-  const excl = s.exclusivity_months ? `Exclusivity ${s.exclusivity_months}m` : "No exclusivity";
-  const rush = s.rush ? "Rush +10%" : "No rush";
-  const health = s.health ? " + Health premium ฿20,000" : "";
-  const scope = `${s.bundle==="bundle3"?"Bundle 3 ":""}Format ${s.format||"A"} • ${toPlat(s.platform)} • ${asset} • ${gencode} • ${excl} • ${rush}${health}`;
-
-  const number = (q.exact ?? q.min);
-  return { type:"text", text:
-`สcope: ${scope}
-ค่าบริการโดยประมาณ: ฿${number.toLocaleString()} (ยังไม่รวมภาษี)
-สูตร: Base + [Health flat + Asset%×Base + Gencode%×Base + 0.15×Base×Exclusivity + Rush%×Base]
-ต้องการใบเสนอราคาไหมคะ?` };
+/**
+ * Convert a quote object into a human readable Thai string.
+ *
+ * @param {Object} quote
+ * @returns {string}
+ */
+function quoteText(quote) {
+  const platformThai = PLATFORM_LABEL[quote.platform] || PLATFORM_LABEL.unknown;
+  const formatThai = FORMAT_LABEL[quote.format] || FORMAT_LABEL.unknown;
+  const assetThai = ASSET_LABEL[quote.asset] || ASSET_LABEL.unknown;
+  const priceThai = quote.price.toLocaleString('th-TH');
+  return `ราคาโดยประมาณ ${priceThai} บาท สำหรับ ${platformThai} รูปแบบ ${formatThai} และ ${assetThai}`;
 }
-function toPlat(p){ return p==="dual"?"Dual (IG+TikTok)":(p==="ig"?"IG Reels":"TikTok"); }
 
 module.exports = {
-  classify, extractSlots, trustScore, quoteFor,
-  gateQuickReply, askForMissing, quoteText
+  classify,
+  extractSlots,
+  trustScore,
+  quoteFor,
+  askForMissing,
+  quoteText
 };
