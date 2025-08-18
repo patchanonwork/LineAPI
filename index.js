@@ -1,90 +1,144 @@
-const express = require("express");
-const line = require("@line/bot-sdk");
-const fs = require("fs");
-const path = require("path");
-require("dotenv").config();
+const fs = require('fs');
+const path = require('path');
+const express = require('express');
+const { Client, validateSignature } = require('@line/bot-sdk');
+const dotenv = require('dotenv');
 
-const { classify, extractSlots, trustScore, quoteFor, gateQuickReply, askForMissing, quoteText } = require("./brain");
-const { sendEmail, sendLinePush } = require("./notifier");
+// Load environment variables from .env when running locally
+dotenv.config();
 
+const { classify, extractSlots, quoteFor, askForMissing, quoteText } = require('./brain');
+const { sendEmail, sendLinePush } = require('./notifier');
+
+// LINE SDK configuration
 const config = {
-  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN,
   channelSecret: process.env.LINE_CHANNEL_SECRET,
+  channelAccessToken: process.env.LINE_CHANNEL_ACCESS_TOKEN
 };
 
-const TRUST_LOW = 40;
-const TRUST_HIGH = 70;
-
+const client = new Client(config);
 const app = express();
-const client = new line.Client(config);
 
-app.get("/healthz", (_req, res) => res.status(200).send("ok"));
+// Middleware to capture raw body for signature verification
+app.use(express.json({
+  verify: (req, res, buf) => {
+    req.rawBody = buf.toString();
+  }
+}));
 
-app.post("/webhook", line.middleware(config), async (req, res) => {
-  const events = req.body.events || [];
-  await Promise.all(events.map(handleEvent));
-  res.status(200).end();
+// Health check endpoint
+app.get('/healthz', (req, res) => {
+  res.status(200).send('ok');
 });
 
-async function handleEvent(e){
-  try{
-    if (e.type !== "message" || e.message.type !== "text") return;
-    const text = (e.message.text || "").trim();
-    const slots  = extractSlots(text);
-    const intent = classify(text);
+// Load contact Flex template
+const contactTemplatePath = path.join(__dirname, 'contactFlex.json');
+let contactTemplate;
+try {
+  const content = fs.readFileSync(contactTemplatePath, 'utf8');
+  contactTemplate = JSON.parse(content);
+} catch (err) {
+  console.error('Failed to load contactFlex.json:', err);
+  contactTemplate = null;
+}
 
-    // Contact flow
-    if (slots.contact) {
-      await reply(e.replyToken, contactFlex());
-      await notifyAdmin("🔔 ผู้ติดต่อกด 'ติดต่อคุณณณ'", text, e);
-      return;
-    }
-    if (slots.notify) {
-      await notifyAdmin("🔔 ผู้ติดต่อขอให้ทีมงานติดต่อกลับ", text, e);
-      await reply(e.replyToken, { type: "text", text: "รับเรื่องเรียบร้อยค่ะ ทีมงานจะติดต่อกลับโดยเร็วที่สุด ✅" });
-      return;
-    }
+// Build a fresh Flex message
+function makeContactFlex() {
+  if (!contactTemplate) return null;
+  const clone = JSON.parse(JSON.stringify(contactTemplate));
+  const replacePlaceholders = (obj) => {
+    Object.keys(obj).forEach((key) => {
+      const val = obj[key];
+      if (typeof val === 'string') {
+        obj[key] = val
+          .replace(/\{\{CONTACT_PHONE\}\}/g, process.env.CONTACT_PHONE || '')
+          .replace(/\{\{CONTACT_EMAIL\}\}/g, process.env.CONTACT_EMAIL || '');
+      } else if (val && typeof val === 'object') {
+        replacePlaceholders(val);
+      }
+    });
+  };
+  replacePlaceholders(clone);
+  return clone;
+}
 
-    const score  = trustScore(e.source, text, slots);
-
-    if (intent === "rate_shop" || score < TRUST_LOW) {
-      return reply(e.replyToken, gateQuickReply());
-    }
-    if (score >= TRUST_HIGH && (slots.format || slots.deliverable) && slots.platform && (slots.asset || slots.gencode)) {
-      const quote = quoteFor(slots);
-      return reply(e.replyToken, quoteText(quote, slots));
-    }
-    const range = quoteFor({ ...slots, coarse: true });
-    return reply(e.replyToken, askForMissing(range, slots));
-  } catch (err){
-    console.error("handleEvent error", err);
+// Notify admin via email and/or LINE push
+async function notifyAdmin(subject, text) {
+  const actions = [];
+  if (process.env.NOTIFY_EMAIL_TO) {
+    actions.push(sendEmail(subject || 'Notification from Line Gatekeeper', text));
+  }
+  if (process.env.ADMIN_GROUP_ID || process.env.ADMIN_USER_ID) {
+    actions.push(sendLinePush(text));
+  }
+  try {
+    await Promise.all(actions);
+  } catch (err) {
+    console.error('notifyAdmin error:', err);
   }
 }
 
-function reply(token, messages){
-  return client.replyMessage(token, Array.isArray(messages) ? messages : [messages]);
-}
+// LINE webhook endpoint
+app.post('/webhook', (req, res) => {
+  const signature = req.headers['x-line-signature'];
+  if (!validateSignature(req.rawBody, config.channelSecret, signature)) {
+    res.status(401).send('Unauthorized');
+    return;
+  }
+  const events = req.body.events || [];
+  Promise.all(events.map((event) => handleEvent(event))).then(() => {
+    res.json({ success: true });
+  }).catch((err) => {
+    console.error('Error handling events:', err);
+    res.status(500).end();
+  });
+});
 
-function contactFlex(){
-  const fp = path.join(__dirname, "contactFlex.json");   // file at repo root
-  const tmpl = JSON.parse(fs.readFileSync(fp, "utf8"));
-  const phone = process.env.CONTACT_PHONE || "+66967676734";
-  const email = process.env.CONTACT_EMAIL || "Patchanon.work@gmail.com";
-  const replaced = JSON.stringify(tmpl)
-    .replace(/{{CONTACT_PHONE}}/g, phone)
-    .replace(/{{CONTACT_EMAIL}}/g, email);
-  return JSON.parse(replaced);
-}
+// Process a single event
+async function handleEvent(event) {
+  if (!event || event.type !== 'message' || event.message.type !== 'text') {
+    return;
+  }
+  const text = (event.message.text || '').trim();
+  const classification = classify(text);
 
-async function notifyAdmin(title, userText, e){
-  const who = e.source.userId ? `userId: ${e.source.userId}` : (e.source.groupId ? `groupId: ${e.source.groupId}` : "unknown");
-  const html = `<h3>${title}</h3><p><b>From:</b> ${who}</p><pre>${userText}</pre>`;
-  try { await sendEmail(title, html); } catch(err){ console.error("email notify failed", err); }
-  try { await sendLinePush(client, `${title}\nFrom ${who}\n---\n${userText}`); } catch(err){ console.error("line notify failed", err); }
-}
+  // Contact request
+  if (classification === 'contact') {
+    const flex = makeContactFlex();
+    if (!flex) {
+      await client.replyMessage(event.replyToken, { type: 'text', text: 'ขออภัย ไม่สามารถแสดงข้อมูลการติดต่อได้ในขณะนี้' });
+    } else {
+      await client.replyMessage(event.replyToken, {
+        type: 'flex',
+        altText: 'ข้อมูลการติดต่อ',
+        contents: flex
+      });
+    }
+    return;
+  }
 
-// (No LIFF page yet, but keep path if you add one later)
-app.use("/liff", express.static("liff"));
+  // Notify request
+  if (classification === 'notify') {
+    const ackMsg = { type: 'text', text: 'ได้รับการแจ้งเตือนแล้ว ขอบคุณค่ะ' };
+    await client.replyMessage(event.replyToken, ackMsg);
+    await notifyAdmin('แจ้งเตือนจากผู้ใช้', `ผู้ใช้แจ้งเตือนด้วยข้อความ: ${text}`);
+    return;
+  }
+
+  // Quote request
+  const slots = extractSlots(text);
+  const missingPrompt = askForMissing(slots);
+  if (missingPrompt) {
+    await client.replyMessage(event.replyToken, { type: 'text', text: missingPrompt });
+    return;
+  }
+  const quote = quoteFor(slots);
+  const replyText = quoteText(quote);
+  await client.replyMessage(event.replyToken, { type: 'text', text: replyText });
+  await notifyAdmin('คำขอเสนอราคา', `รายละเอียดคำขอ: ${JSON.stringify(slots)} | ราคา: ${quote.price}`);
+}
 
 const port = process.env.PORT || 8080;
-app.listen(port, () => console.log("listening on :" + port));
+app.listen(port, () => {
+  console.log(`Line Gatekeeper is running on port ${port}`);
+});
